@@ -6,66 +6,66 @@ const { Server } = require("socket.io");
 
 const connectDB = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
-const authMiddleware = require("./middleware/authMiddleware");
 const Message = require("./models/Message");
 
 dotenv.config();
 
 const app = express();
+
+// 🔥 Create HTTP server
 const server = http.createServer(app);
 
-// 🔥 Track online users (username -> socketId)
-let onlineUsers = {};
+// 🔥 Setup Socket.IO
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
 
-// DB
+// 🔥 Connect DB
 connectDB();
 
-// Middleware
+// 🔥 Middleware
 app.use(cors({
   origin: "*",
   credentials: true
 }));
-app.use(cors());
 app.use(express.json());
 
-// Routes
+// 🔥 Routes
 app.use("/api/auth", authRoutes);
 
 app.get("/", (req, res) => {
   res.send("API is running...");
 });
 
-app.get("/api/protected", authMiddleware, (req, res) => {
-  res.json({
-    message: "Protected data accessed",
-    user: req.user
-  });
-});
+// 🔥 Online Users Store
+let onlineUsers = {};
 
-// 🔥 SOCKET LOGIC
+// 🔥 Socket Logic
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // 👉 User joins with username
+  // Join user
   socket.on("join", (username) => {
-    socket.username = username; // store on socket
     onlineUsers[username] = socket.id;
 
-    console.log("Online users:", onlineUsers);
-
-    // Broadcast updated list
     io.emit("onlineUsers", Object.keys(onlineUsers));
   });
 
-  // 👉 Private message
+  // Private message
   socket.on("sendPrivateMessage", async ({ text, sender, receiver }) => {
     try {
-      const newMessage = new Message({ text, user: sender });
+      const newMessage = new Message({
+        text,
+        user: sender
+      });
+
       await newMessage.save();
 
       const receiverSocket = onlineUsers[receiver];
 
-      // send to receiver
       if (receiverSocket) {
         io.to(receiverSocket).emit("receiveMessage", {
           text,
@@ -73,7 +73,7 @@ io.on("connection", (socket) => {
         });
       }
 
-      // also send back to sender
+      // Send back to sender
       socket.emit("receiveMessage", {
         text,
         user: sender
@@ -84,26 +84,24 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 👉 Disconnect
+  // Disconnect
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-
-    if (socket.username) {
-      delete onlineUsers[socket.username];
-      io.emit("onlineUsers", Object.keys(onlineUsers));
+    for (let user in onlineUsers) {
+      if (onlineUsers[user] === socket.id) {
+        delete onlineUsers[user];
+      }
     }
+
+    io.emit("onlineUsers", Object.keys(onlineUsers));
+
+    console.log("User disconnected:", socket.id);
   });
 });
 
-// Error handler
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: "Something went wrong" });
-});
-
-// Start server
+// 🔥 PORT
 const PORT = process.env.PORT || 5000;
 
+// 🔥 START SERVER (IMPORTANT CHANGE)
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
